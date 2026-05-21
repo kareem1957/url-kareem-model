@@ -45,11 +45,14 @@ artifacts/models/*.bin
 artifacts/encoders/*.pkl
 artifacts/metrics/*.json
 
-# Data (never commit raw data)
+# Data (mostly excluded, EXCEPT the Tranco allowlist needed at runtime)
 data/raw/*
+!data/raw/.gitkeep
+!data/raw/tranco/
+data/raw/tranco/*
+!data/raw/tranco/top-1m.csv
 data/interim/*
 data/processed/*
-!data/raw/.gitkeep
 !data/interim/.gitkeep
 !data/processed/.gitkeep
 
