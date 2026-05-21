@@ -1,6 +1,5 @@
 ---
 title: Phishing URL Detection API
-emoji: shield
 colorFrom: red
 colorTo: blue
 sdk: docker
