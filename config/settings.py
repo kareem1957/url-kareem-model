@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     high_risk_threshold: float = 0.85
     medium_risk_threshold: float = 0.55
 
+    # Allowlist behavior
+    allowlist_enabled: bool = True
+    allowlist_top_n: int = 100_000
+
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000

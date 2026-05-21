@@ -7,13 +7,18 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-data/raw/
+
+# Most data is excluded from the image, EXCEPT the Tranco allowlist
+# which is needed at runtime by src/explainability/allowlist.py.
+data/raw/phiusiil/
+data/raw/phiusiil.zip
+data/raw/tranco_top1m.zip
 data/interim/
 data/processed/
-*.csv
 *.parquet
 *.zip
 *.json.gz
+
 notebooks/
 *.ipynb
 .ipynb_checkpoints/
@@ -36,4 +41,5 @@ scripts/prepare_splits.py
 scripts/train_lgbm.py
 scripts/debug_predictions.py
 scripts/inspect_model.py
+scripts/build_pdf.py
 tests/

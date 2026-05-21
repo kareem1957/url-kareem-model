@@ -1,25 +1,30 @@
 """
-Hybrid ML + Rules + SHAP combiner.
+Hybrid ML + Rules + Allowlist + SHAP combiner.
 
-Given a URL, this module:
-  1. Normalizes it
-  2. Extracts features and gets the LightGBM probability
-  3. Runs the deterministic rule engine
-  4. Computes SHAP attributions for the ML decision
-  5. Combines everything into a final verdict with rich explanations
+Decision order:
+  1. Run normalization and feature extraction.
+  2. Run the deterministic rule engine.
+  3. If any high-severity rule fires (typosquat, brand-stuffing,
+     embedded credentials, etc.) -> verdict is PHISHING regardless
+     of anything else. Rules carry highest priority because they
+     target unambiguous phishing patterns.
+  4. Otherwise, if the registered domain is in the allowlist
+     (Tranco top-N), short-circuit to LEGITIMATE with high
+     confidence. This avoids ML false positives on well-known
+     legitimate sites (github.com, stackoverflow.com, etc.).
+  5. Otherwise, fall back to the LightGBM model probability.
 
-Explanation policy:
-  - Rule-based explanations come first (highest precision, human-written)
-  - SHAP-based explanations fill the gap when no rule fires but ML
-    still flagged the URL, telling the user WHICH features drove
-    the model's decision
-  - If neither rule nor strong ML signal exists (legitimate URL),
-    explanations are empty
+This ordering matters: rules-then-allowlist-then-ML means a
+github.com@evil.com URL (embedded credentials rule fires) still
+gets flagged correctly. The allowlist NEVER overrides a fired
+rule; rules NEVER bypass the allowlist for non-malicious URLs.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config.settings import settings
+from src.explainability.allowlist import is_allowlisted
 from src.explainability.rule_engine import (
     RuleEngineResult,
     evaluate_rules,
@@ -71,42 +76,54 @@ def predict(
         lgbm: trained LightGBM model.
         shap_explainer: optional SHAP explainer. If provided, SHAP-based
                         feature explanations are included for ML-driven
-                        decisions. If None, only rule explanations are
-                        used (faster but less informative).
+                        decisions.
     """
     vec, nurl = extract_features(url)
 
     ml_prob = float(lgbm.predict_proba(vec)[0])
     rules = evaluate_rules(nurl)
 
+    # Decision priority 1: rules override everything (highest precision)
     if rules.is_phishing:
         final_prob = max(ml_prob, rules.max_severity)
+        explanations: list[str] = list(rules.explanations)
+        triggered_rules = tuple(r.rule_id for r in rules.triggered_rules)
+
+    # Decision priority 2: allowlist short-circuits for known-good domains
+    elif (
+        settings.allowlist_enabled
+        and is_allowlisted(nurl.domain_parts.registered_domain)
+    ):
+        # Force legitimate with high confidence. The ML probability is
+        # preserved in the response for transparency, but the verdict
+        # is driven by the allowlist.
+        final_prob = min(ml_prob, 0.05)  # cap at 5% phishing
+        explanations = []
+        triggered_rules = ()
+
+    # Decision priority 3: fall back to ML model
     else:
         final_prob = ml_prob
+        explanations = list(rules.explanations)
+        triggered_rules = tuple(r.rule_id for r in rules.triggered_rules)
 
-    # Compose explanations:
-    # 1) Rule explanations (always included if rules fired)
-    # 2) SHAP explanations (included when ML flagged AND no rule fired,
-    #    OR when both fired and we want richer info)
-    explanations: list[str] = list(rules.explanations)
-
-    needs_shap = (
-        shap_explainer is not None
-        and final_prob >= 0.5
-        and not rules.is_phishing
-    )
-    if needs_shap:
-        shap_results = shap_explainer.explain(vec)
-        ml_explanations = shap_explanations_to_strings(
-            shap_results, top_n=4, only_positive=True
-        )
-        if ml_explanations:
-            explanations.extend(ml_explanations)
-        else:
-            explanations.append(
-                "Statistical model flagged this URL but no single "
-                "feature dominated; review the URL carefully."
+        # Add SHAP-based explanations for ML-driven phishing decisions
+        if (
+            shap_explainer is not None
+            and final_prob >= 0.5
+            and not rules.is_phishing
+        ):
+            shap_results = shap_explainer.explain(vec)
+            ml_explanations = shap_explanations_to_strings(
+                shap_results, top_n=4, only_positive=True
             )
+            if ml_explanations:
+                explanations.extend(ml_explanations)
+            else:
+                explanations.append(
+                    "Statistical model flagged this URL but no single "
+                    "feature dominated; review the URL carefully."
+                )
 
     prediction = "phishing" if final_prob >= 0.5 else "legitimate"
     confidence = abs(final_prob - 0.5) * 200.0
@@ -119,6 +136,6 @@ def predict(
         confidence_score=round(confidence, 2),
         risk_level=_risk_level(final_prob),
         explanations=tuple(explanations),
-        triggered_rules=tuple(r.rule_id for r in rules.triggered_rules),
+        triggered_rules=triggered_rules,
         ml_probability=round(ml_prob * 100.0, 2),
     )
