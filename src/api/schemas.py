@@ -81,6 +81,27 @@ class PredictionResponse(BaseModel):
         description="Raw ML model probability (before rule combination), in percent.",
     )
 
+    # urlscan.io screenshot feature - populated only on phishing verdicts when
+    # the URLSCAN_API_KEY environment variable is configured. The Flutter
+    # client polls /screenshot/{scan_id} to retrieve the rendered image.
+    screenshot_scan_id: str | None = Field(
+        default=None,
+        description=(
+            "urlscan.io scan UUID. When present, the client should poll "
+            "/screenshot/{scan_id} every 5 seconds (after an initial 15s wait) "
+            "to retrieve the screenshot URL. Null on legitimate URLs or when "
+            "the screenshot feature is disabled."
+        ),
+    )
+    screenshot_cached: bool = Field(
+        default=False,
+        description=(
+            "True if this URL was already scanned recently and the screenshot "
+            "is likely available on the first poll (cache hit, no waiting "
+            "required)."
+        ),
+    )
+
 
 class BatchPredictionResponse(BaseModel):
     """Batch prediction response. Failed URLs are reported in errors."""
@@ -111,3 +132,54 @@ class ModelInfoResponse(BaseModel):
     n_features: int
     test_metrics: dict
     feature_names: list[str]
+
+
+class ScreenshotResponse(BaseModel):
+    """Response for the screenshot polling endpoint /screenshot/{scan_id}.
+
+    Returned by GET /screenshot/{scan_id}. The client polls this endpoint
+    every 5 seconds (after an initial 15-second wait) until status == 'ready',
+    then renders screenshot_url directly via <img> or Flutter's Image.network().
+    The screenshot URL itself is hosted on urlscan.io's public CDN and
+    requires no authentication to view.
+    """
+
+    scan_id: str = Field(..., description="urlscan.io scan UUID (echo of input).")
+    status: Literal["pending", "ready", "failed"] = Field(
+        ...,
+        description=(
+            "'pending' = scan still rendering on urlscan (poll again in 5s); "
+            "'ready' = screenshot_url is now populated and safe to render; "
+            "'failed' = permanent failure, do not retry."
+        ),
+    )
+    screenshot_url: str | None = Field(
+        default=None,
+        description=(
+            "Publicly accessible PNG URL on urlscan.io's CDN. Use directly in "
+            "<img src> or Flutter Image.network() — no auth required."
+        ),
+    )
+    urlscan_verdict_malicious: bool | None = Field(
+        default=None,
+        description=(
+            "urlscan.io's own phishing verdict. Useful as a second opinion "
+            "alongside our model's verdict."
+        ),
+    )
+    urlscan_score: int | None = Field(
+        default=None, ge=0, le=100,
+        description="urlscan.io malice score, 0 (clean) to 100 (highly malicious).",
+    )
+    detected_brands: list[str] = Field(
+        default_factory=list,
+        description="Brands urlscan detected this page is impersonating.",
+    )
+    report_url: str | None = Field(
+        default=None,
+        description="Full human-readable threat report on urlscan.io.",
+    )
+    error: str | None = Field(
+        default=None,
+        description="Error message if status='failed' or temporary issue note.",
+    )

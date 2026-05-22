@@ -71,5 +71,17 @@ class Settings(BaseSettings):
     # CORS for Flutter client
     cors_origins: list[str] = ["*"]
 
+    # urlscan.io integration for phishing screenshot rendering
+    urlscan_api_key: str = Field(
+        default="",
+        description=(
+            "urlscan.io API key for the screenshot feature. Get one free at "
+            "https://urlscan.io/user/signup. When set, /predict on phishing "
+            "verdicts will return a scan_id that the client polls via "
+            "/screenshot/{scan_id}. When empty, the screenshot feature is "
+            "disabled but all other endpoints work normally."
+        ),
+    )
+
 
 settings = Settings()
